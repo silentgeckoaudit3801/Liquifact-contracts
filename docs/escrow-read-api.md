@@ -1,4 +1,4 @@
-# Escrow Read API
+﻿# Escrow Read API
 
 Complete catalog of all public read-only views on `LiquifactEscrow`. All functions are pure reads:
 no state mutation, no authorization required unless specified otherwise.
@@ -44,6 +44,7 @@ re-implementing storage reads to guarantee identical semantics.
 
 **Per-Investor State:**
 - [get_contribution](#get_contributioninvestor-address--i128)
+- [get_contributions](#get_contributionsaddresses-vecaddress--veci128)
 - [get_unique_funder_count](#get_unique_funder_count--u32)
 - [get_investor_yield_bps](#get_investor_yield_bpsinvestor-address--i64)
 - [get_investor_claim_not_before](#get_investor_claim_not_beforeinvestor-address--u64)
@@ -522,6 +523,28 @@ Returns the cumulative principal contributed by `investor` in token base units.
 **Requires initialization:** No  
 **Default when absent:** `0` (never contributed)  
 **Storage type:** Persistent (independent TTL per address; see ADR-007)
+
+---
+
+### `get_contributions(addresses: Vec<Address>) → Vec<i128>`
+
+**Storage key:** `DataKey::InvestorContribution(address)` for each supplied address (persistent)  
+**Signature:** `pub fn get_contributions(env: Env, addresses: Vec<Address>) -> Vec<i128>`
+
+Returns one contribution amount for each supplied address, preserving the input order. Addresses
+without recorded principal return `0`, matching `get_contribution`.
+
+**Requires initialization:** No  
+**Default when absent:** `0` per address (never contributed)  
+**Storage type:** Persistent (independent TTL per address; see ADR-007)  
+**Batch limit:** `MAX_CONTRIBUTIONS_BATCH = 50`; larger inputs fail with
+`EscrowError::ContributionBatchTooLarge` (code 112).
+
+**Integrator pattern:** fetch a page with `get_investors(start, limit)` and pass that page directly
+to `get_contributions`. The batch limit intentionally matches the `get_investors` page ceiling, so
+one address page and one amount page always have the same maximum size.
+
+**Security note:** pure read; no authorization, storage writes, token calls, or TTL bump.
 
 ---
 
