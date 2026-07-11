@@ -1,4 +1,4 @@
-#![cfg_attr(not(test), no_std)]
+﻿#![cfg_attr(not(test), no_std)]
 //! LiquiFact Escrow Contract
 //!
 //! Holds investor funds for an invoice until settlement.
@@ -180,6 +180,13 @@ pub const MAX_INVOICE_AMOUNT: i128 = i128::MAX / 10_000;
 /// Upper bound on [`LiquifactEscrow::fund_batch`] entries to keep storage/CPU bounded.
 /// Mirrors the spirit of `MAX_ATTESTATION_APPEND_ENTRIES` to limit per-call work.
 pub const MAX_FUND_BATCH: u32 = 50;
+
+/// Upper bound on [`LiquifactEscrow::get_contributions`] addresses per read call.
+///
+/// Matches the public [`LiquifactEscrow::get_investors`] page ceiling so an indexer can
+/// fetch one page of addresses and the corresponding principal amounts with identical
+/// bounds.
+pub const MAX_CONTRIBUTIONS_BATCH: u32 = 50;
 
 /// Upper bound on [`LiquifactEscrow::set_investors_allowlisted`] batch size.
 pub const MAX_INVESTOR_ALLOWLIST_BATCH: u32 = 32;
@@ -374,6 +381,8 @@ pub enum EscrowError {
     /// Reject at deposit time so a settled escrow cannot hold an investor's payout
     /// claim hostage beyond the point where principal is due.
     CommitmentLockExceedsMaturity = 111,
+    /// [`LiquifactEscrow::get_contributions`] exceeded [`MAX_CONTRIBUTIONS_BATCH`].
+    ContributionBatchTooLarge = 112,
 
     /// [`LiquifactEscrow::settle`] blocked while a legal hold is active.
     LegalHoldBlocksSettlement = 120,
@@ -2170,6 +2179,26 @@ impl LiquifactEscrow {
     /// Public API: contribution recorded for `investor` (persistent storage).
     pub fn get_contribution(env: Env, investor: Address) -> i128 {
         Self::get_persistent_investor_contribution(&env, investor)
+    }
+
+    /// Public API: contributions recorded for each supplied investor, preserving input order.
+    ///
+    /// Returns `0` for addresses without a contribution, matching [`Self::get_contribution`].
+    /// The input length is capped by [`MAX_CONTRIBUTIONS_BATCH`] to keep read work bounded.
+    /// This is a pure read: no authorization, no storage writes, and no TTL bump.
+    pub fn get_contributions(env: Env, addresses: Vec<Address>) -> Vec<i128> {
+        let n = addresses.len();
+        ensure(
+            &env,
+            n <= MAX_CONTRIBUTIONS_BATCH,
+            EscrowError::ContributionBatchTooLarge,
+        );
+
+        let mut result = Vec::new(&env);
+        for addr in addresses.iter() {
+            result.push_back(Self::get_persistent_investor_contribution(&env, addr));
+        }
+        result
     }
 
     /// Returns a paginated list of investor addresses who have contributed to this escrow.
