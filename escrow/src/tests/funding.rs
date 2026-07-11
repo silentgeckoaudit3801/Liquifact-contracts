@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use crate::EscrowError;
 use soroban_sdk::{Error, InvokeError};
 use std::fmt::Debug;
@@ -4119,6 +4119,90 @@ fn test_get_investors_pagination() {
     }
     let max_page = client2.get_investors(&0, &100);
     assert_eq!(max_page.len(), 50);
+}
+
+#[test]
+fn test_get_contributions_preserves_order_and_matches_single_reads() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    let inv_a = Address::generate(&env);
+    let inv_b = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    client.fund(&inv_a, &20_000i128);
+    client.fund(&inv_b, &50_000i128);
+
+    let mut addresses = SorobanVec::new(&env);
+    addresses.push_back(inv_b.clone());
+    addresses.push_back(stranger.clone());
+    addresses.push_back(inv_a.clone());
+
+    let contributions = client.get_contributions(&addresses);
+    assert_eq!(contributions.len(), 3);
+    assert_eq!(contributions.get(0).unwrap(), client.get_contribution(&inv_b));
+    assert_eq!(contributions.get(1).unwrap(), 0i128);
+    assert_eq!(contributions.get(2).unwrap(), client.get_contribution(&inv_a));
+}
+
+#[test]
+fn test_get_contributions_empty_and_duplicate_addresses() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    let empty: SorobanVec<Address> = SorobanVec::new(&env);
+    assert_eq!(client.get_contributions(&empty).len(), 0);
+
+    let investor = Address::generate(&env);
+    client.fund(&investor, &12_345i128);
+
+    let mut addresses = SorobanVec::new(&env);
+    addresses.push_back(investor.clone());
+    addresses.push_back(investor.clone());
+
+    let contributions = client.get_contributions(&addresses);
+    assert_eq!(contributions.len(), 2);
+    assert_eq!(contributions.get(0).unwrap(), 12_345i128);
+    assert_eq!(contributions.get(1).unwrap(), 12_345i128);
+}
+
+#[test]
+fn test_get_contributions_accepts_max_batch_size() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    let mut addresses = SorobanVec::new(&env);
+    for _ in 0..MAX_CONTRIBUTIONS_BATCH {
+        let investor = Address::generate(&env);
+        client.fund(&investor, &1_000i128);
+        addresses.push_back(investor);
+    }
+
+    let contributions = client.get_contributions(&addresses);
+    assert_eq!(contributions.len(), MAX_CONTRIBUTIONS_BATCH);
+    for amount in contributions.iter() {
+        assert_eq!(amount, 1_000i128);
+    }
+}
+
+#[test]
+fn test_get_contributions_rejects_oversized_batch() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    let mut addresses = SorobanVec::new(&env);
+    for _ in 0..=MAX_CONTRIBUTIONS_BATCH {
+        addresses.push_back(Address::generate(&env));
+    }
+
+    assert_contract_error(
+        client.try_get_contributions(&addresses),
+        EscrowError::ContributionBatchTooLarge,
+    );
 }
 
 #[test]
